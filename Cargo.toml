@@ -3,5 +3,11 @@ name = "psxdemos"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "hello-world"
+
+[[bin]]
+name = "simple-graphics"
+
 [dependencies]
 psx = { git = "ssh://git@github.com/ayrtonm/psx-sdk-rs" }
