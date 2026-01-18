@@ -9,5 +9,8 @@ name = "hello-world"
 [[bin]]
 name = "simple-graphics"
 
+[[bin]]
+name = "textured-graphics"
+
 [dependencies]
 psx = { path = "./psx-sdk-rs/psx" }
