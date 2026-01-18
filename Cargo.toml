@@ -10,4 +10,4 @@ name = "hello-world"
 name = "simple-graphics"
 
 [dependencies]
-psx = { git = "ssh://git@github.com/ayrtonm/psx-sdk-rs" }
+psx = { path = "./psx-sdk-rs/psx" }
