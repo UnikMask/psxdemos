@@ -58,7 +58,7 @@ fn main() {
                     txt,
                     "OTC {i}: {:x} -> {:x}",
                     &raw const draw[i] as u32,
-                    draw[i].get_next()
+                    draw[i].header_address()
                 );
             });
             //
