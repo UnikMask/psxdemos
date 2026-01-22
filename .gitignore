@@ -1,1 +1,4 @@
 /target
+*.bin
+*.cue
+resources/license_data.dat
