@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- Description of the simple-graphics project -->
+<iso_project image="simple-graphics.bin" cue_sheet="simple-graphics.cue" no_xa="0">
+    <track type="data">
+        <identifiers
+            publisher="UNIKMASK"
+            data_preparer="MKPSXISO"
+            copyright="MIT"
+        />
+        <!-- Provide your own license file for this - not gonna add a license to
+        a public repo (no no no)-->
+        <license file="license_data.dat" />
+        <directory_tree>
+            <file name="main.exe" type="data"
+                source="../target/mipsel-sony-psx/release/simple-graphics.exe" />
+            <file name="system.cnf" type="data" source="system.cnf" />
+            <dummy sectors="1024" type="0" />
+        </directory_tree>
+    </track>
+</iso_project>
