@@ -1,0 +1,6 @@
+<tim_project>
+    <properties buffer_res="2" buffer_order="0"/>
+    <tim_group name="global">
+        <tim file="stones_useable.tim"/>
+    </tim_group>
+</tim_project>
