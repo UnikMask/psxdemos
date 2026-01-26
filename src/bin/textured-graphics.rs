@@ -1,10 +1,18 @@
 #![no_std]
 #![no_main]
+#![feature(ptr_as_ref_unchecked)]
+#![feature(core_intrinsics)]
+
+use core::{
+    f32::consts::PI,
+    intrinsics::{cosf32, sinf32},
+    mem,
+};
 
 use psx::{
     Framebuffer, LoadedTIM, TextBox, dma, dprintln,
     gpu::{
-        Color, Packet, TexCoord, TexPage, Vertex, VideoMode,
+        Bpp, Color, Packet, TexColor, TexCoord, TexPage, Vertex, VideoMode,
         primitives::{DrawModeTexPage, Sprt, Tile},
     },
     hw::gpu::GP0Command,
@@ -174,47 +182,48 @@ fn load_level(fb: &mut Framebuffer) -> LevelState {
 }
 
 /// Update things - logic written here
-fn update(graphics: &mut GraphicsEnv, txt: &mut TextBox, state: &mut LevelState) {
-    graphics.buffer.reset();
-
-    (0..8).for_each(|i| {
-        dprintln!(
-            txt,
-            "OTC {i}: {:x} -> {:x}",
-            &raw const graphics.otc[i] as u32,
-            graphics.otc[i].header_address()
-        );
-    });
-
+fn update(draw: &mut GraphicsEnv, txt: &mut TextBox, state: &mut LevelState) {
     // Draw a sprite primitive
-    let sprt = graphics
-        .buffer
-        .new_primitive::<Sprt>()
-        .expect("No new sprite!");
-    sprt.contents = Sprt::new();
-    sprt.contents.set_offset(Vertex(48, 48));
+    dprintln!(txt, "Draw index size: {}", draw.buffer.index);
+
+    let rev = 560. / (2. * PI);
+    let sprt = draw.buffer.new_primitive::<Sprt>().expect("No new sprite!");
+    *sprt = Packet::new(Sprt::new());
+    sprt.contents.set_offset(Vertex(
+        160 - 32 + ((cosf32((state.frame_no as f32) / rev) * 60.) as i16),
+        120 - 32 + ((sinf32((state.frame_no as f32) / rev) * 60.) as i16),
+    ));
     sprt.contents.set_size(Vertex(64, 64));
     sprt.contents.set_tex_coord(TexCoord { x: 0, y: 0 });
+    sprt.contents.set_color(TexColor {
+        red: 128,
+        green: 128,
+        blue: 128,
+    });
     if let Some(clut) = state.texture_stone.clut {
         sprt.contents.set_clut(clut);
     }
-    graphics.otc[1].insert_packet(sprt);
+    draw.otc[1].insert_packet(sprt);
 
     dprintln!(txt, "texpage: {:b}", unsafe {
         core::mem::transmute::<TexPage, u16>(state.texture_stone.tex_page)
     });
 
-    // Add the TPage primitive next
-    let tpage = graphics
+    // Add the TPage primitive for rocks next
+    let tpage = draw
         .buffer
         .new_primitive::<DrawModeTexPage>()
         .expect("Getting tex page failed!");
-    tpage.contents = DrawModeTexPage::new();
-    tpage.contents.set_tex_page(state.texture_stone.tex_page);
-    graphics.otc[1].insert_packet(tpage);
+    *tpage = Packet::new(DrawModeTexPage::from(
+        state.texture_stone.tex_page,
+        Bpp::Bits8,
+        false,
+        true,
+    ));
+    draw.otc[1].insert_packet(tpage);
 
     // Add tiles
-    for i in 0..8 {
+    for i in 0..4 {
         let orig_pos = (i as i16) * 40;
         let lines = (state.frame_no + orig_pos) / 280;
         let x_offset = if lines % 2 == 0 {
@@ -222,8 +231,8 @@ fn update(graphics: &mut GraphicsEnv, txt: &mut TextBox, state: &mut LevelState)
         } else {
             280 - ((orig_pos + state.frame_no) % 280)
         };
-        let tile = graphics.buffer.new_primitive::<Tile>().expect("No!?");
-        tile.contents = Tile::new();
+        let tile = draw.buffer.new_primitive::<Tile>().expect("No!?");
+        *tile = Packet::new(Tile::new());
         tile.contents.set_offset(Vertex(x_offset, (i as i16) * 30));
         tile.contents.set_size(Vertex(40, 30));
         tile.contents.set_color(Color {
@@ -231,7 +240,7 @@ fn update(graphics: &mut GraphicsEnv, txt: &mut TextBox, state: &mut LevelState)
             green: 255,
             blue: 0,
         });
-        graphics.otc[2].insert_packet(tile);
+        draw.otc[2].insert_packet(tile);
     }
 
     state.frame_no = (state.frame_no + 1) % 560;
