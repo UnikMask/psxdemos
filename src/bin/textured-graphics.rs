@@ -88,40 +88,33 @@ impl<const LEN: usize> GraphicsBuffer<LEN> {
     pub fn new_primitive<T: GP0Command>(
         &mut self,
     ) -> Result<&mut Packet<T>, GraphicsBufferFullError> {
-        let packet_len = core::mem::size_of::<Packet<T>>();
-        let index_aligned = self.index.next_multiple_of(packet_len);
-
-        if LEN <= index_aligned + packet_len {
+        if LEN <= self.index + mem::size_of::<Packet<T>>() {
             return Err(GraphicsBufferFullError {
                 index: self.index,
-                packet_len,
+                packet_len: mem::size_of::<Packet<T>>(),
                 max_len: LEN,
             });
         }
 
         let prim_mut_ref = unsafe {
             (&raw mut self.buf)
-                .add(index_aligned)
+                .add(self.index)
                 .cast::<Packet<T>>()
                 .as_mut()
                 .expect("Null pointer on index access!")
         };
-        self.index = index_aligned + packet_len;
+        self.index += mem::size_of::<Packet<T>>();
         Ok(prim_mut_ref)
     }
 
     pub unsafe fn new_primitive_unchecked<T: GP0Command>(&mut self) -> &mut Packet<T> {
-        let packet_len = core::mem::size_of::<Packet<T>>();
-        let index_aligned = self.index.next_multiple_of(packet_len);
-
         let prim_mut_ref = unsafe {
             (&raw mut self.buf)
-                .add(index_aligned)
+                .add(self.index)
                 .cast::<Packet<T>>()
-                .as_mut()
-                .expect("Null pointer on index access!")
+                .as_mut_unchecked()
         };
-        self.index = index_aligned + packet_len;
+        self.index += mem::size_of::<Packet<T>>();
         prim_mut_ref
     }
 
