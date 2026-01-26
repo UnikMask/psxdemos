@@ -37,6 +37,7 @@ struct MainState {
     fb: Framebuffer,
     gpu_dma: dma::GPU,
     otc_dma: dma::OTC,
+    stdout_tim: LoadedTIM,
     txt: TextBox,
 }
 
@@ -47,11 +48,13 @@ fn init() -> MainState {
     let mut fb = Framebuffer::new(buf0, buf1, res, VIDEO_MODE, None).expect("Failed??");
     fb.set_bg_color(BG_COLOR);
 
-    let txt = fb.load_default_font().new_text_box(DBG_TEXT_OFFSET, res);
+    let stdout_tim = fb.load_default_font();
+    let txt: TextBox = stdout_tim.new_text_box(DBG_TEXT_OFFSET, res);
     MainState {
         fb,
         gpu_dma: dma::GPU::new(),
         otc_dma: dma::OTC::new(),
+        stdout_tim,
         txt,
     }
 }
@@ -246,6 +249,7 @@ fn main() {
         mut gpu_dma,
         mut otc_dma,
         mut txt,
+        stdout_tim,
     } = init();
 
     // Set up graphics
@@ -258,11 +262,23 @@ fn main() {
         graphics_state.swapped = !graphics_state.swapped;
         let (disp, mut draw) = get_disp_and_draw(&mut graphics_state);
 
-        gpu_dma.send_list_and(&disp.otc[2], || {
+        gpu_dma.send_list_and(&disp.otc[OT_SIZE - 1], || {
             let draw_otc =
                 unsafe { core::mem::transmute::<&mut [Packet<()>], &mut [u32]>(draw.otc) };
             otc_dma.send_reverse(draw_otc).expect("OTC DMA failed!");
+
             txt.reset();
+            draw.buffer.reset();
+
+            // Reset draw mode after sprites
+            let stdout_draw = draw.buffer.new_primitive::<DrawModeTexPage>().expect("??");
+            *stdout_draw = Packet::new(DrawModeTexPage::from(
+                stdout_tim.tex_page,
+                Bpp::Bits4,
+                false,
+                true,
+            ));
+            draw.otc[0].insert_packet(stdout_draw);
             update(&mut draw, &mut txt, &mut level_state);
         });
 
