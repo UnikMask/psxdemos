@@ -14,3 +14,4 @@ name = "textured-graphics"
 
 [dependencies]
 psx = { path = "./psx-sdk-rs/psx" }
+thiserror-no-std = "2.0.2"
