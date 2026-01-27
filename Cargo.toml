@@ -12,6 +12,9 @@ name = "simple-graphics"
 [[bin]]
 name = "textured-graphics"
 
+[[bin]]
+name = "input-management"
+
 [dependencies]
 psx = { path = "./psx-sdk-rs/psx" }
 thiserror-no-std = "2.0.2"
