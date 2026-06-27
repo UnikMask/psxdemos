@@ -1,14 +1,22 @@
+//! Input management demo
+//! For sake of learning, this will be using
+//! the BIOS functions and not the SDK provided
+//! gamepad controls
+
 #![no_std]
 #![no_main]
+#![feature(asm_experimental_arch)]
+use core::{arch::asm, mem::MaybeUninit, ptr::read_volatile};
 
 use psx::{
-    Framebuffer, LoadedTIM, TextBox, dma,
+    Framebuffer, LoadedTIM, TextBox, dma, dprintln,
     gpu::{
         Bpp, Color, Packet, TexColor, TexCoord, Vertex, VideoMode,
         primitives::{DrawModeTexPage, Sprt},
     },
     hw::gpu::GP0Command,
-    include_tim,
+    include_tim, println,
+    sys::kernel::{psx_change_clear_pad, psx_change_clear_rcnt, psx_init_pad, psx_start_pad},
 };
 
 const RES_X: i16 = 320;
@@ -22,12 +30,26 @@ const BG_COLOR: Color = Color {
 const DBG_TEXT_OFFSET: (i16, i16) = (8, 8);
 
 const OT_SIZE: usize = 8;
-const BUF_SIZE: usize = 32768;
+const BUF_SIZE: usize = 32_768;
+const PAD_BUF_SIZE: usize = 34;
+
+// Gamepad consts
+const PAD_UP: u16 = 0x10;
+const PAD_RIGHT: u16 = 0x20;
+const PAD_DOWN: u16 = 0x40;
+const PAD_LEFT: u16 = 0x80;
+
+static mut PAD_BUFFER: [MaybeUninit<[u32; PAD_BUF_SIZE]>; 2] = [MaybeUninit::uninit(); 2];
 
 struct MainState {
+    // Video framebuffer
     fb: Framebuffer,
+
+    // DMA channels
     gpu_dma: dma::GPU,
     otc_dma: dma::OTC,
+
+    // Debug related text and TIM
     stdout_tim: LoadedTIM,
     txt: TextBox,
 }
@@ -63,6 +85,7 @@ fn init() -> MainState {
 
     let stdout_tim = fb.load_default_font();
     let txt: TextBox = stdout_tim.new_text_box(DBG_TEXT_OFFSET, res);
+
     MainState {
         fb,
         gpu_dma: dma::GPU::new(),
@@ -128,8 +151,40 @@ struct InputAccumulator {
     movement: Vertex,
 }
 
+fn init_input() {
+    // Initialize gamepad buffer - 0xff value made s.t. program doesn't
+    // process faulty input on empty buffer
+    unsafe {
+        // Initialize the PAD on the buffer we made
+        psx_init_pad(
+            (&raw mut PAD_BUFFER[0]).cast(),
+            34,
+            (&raw mut PAD_BUFFER[1]).cast(),
+            34,
+        )
+    };
+    unsafe {
+        (0..=1).for_each(|i| {
+            (&raw mut PAD_BUFFER[i])
+                .cast::<u32>()
+                .write_volatile(0xffff_ffff);
+            (&raw mut PAD_BUFFER[i])
+                .cast::<u32>()
+                .add(1)
+                .write_volatile(0x8080_8080);
+        });
+
+        // Edit breakpoint memory
+        psx_start_pad();
+        asm!("nop"); // For funsies lmao
+        psx_change_clear_pad(0);
+        psx_change_clear_rcnt(3, false);
+    }; //start  gamepad polling
+}
+
 #[unsafe(no_mangle)]
 fn main() {
+    // Initialize input before everything else
     let MainState {
         mut fb,
         mut gpu_dma,
@@ -137,22 +192,43 @@ fn main() {
         mut txt,
         stdout_tim,
     } = init();
+    init_input();
+    unsafe { (0x8000aaa0 as *mut u32).write_volatile(0x33) };
 
     // Set up graphics
-    let level_state = load_level(&mut fb);
     let mut graphics_state = init_graphics();
+    let mut level_state = load_level(&mut fb);
+    let mut i: u32 = 0;
 
+    unsafe { (0x8000aaa0 as *mut u32).write_volatile(0x35) };
     loop {
         graphics_state.swapped = !graphics_state.swapped;
         let (disp, draw) = get_disp_and_draw(&mut graphics_state);
 
-        // Reset the ordering table
-        let draw_otc = unsafe { core::mem::transmute::<&mut [Packet<()>], &mut [u32]>(draw.otc) };
-
-        // Display previous table, set up drawing for current DMA
+        // TODO: Replace with drawop
         gpu_dma.send_list_and(&disp.otc[OT_SIZE - 1], || {
+            // Reset the ordering table
+            let draw_otc =
+                unsafe { core::mem::transmute::<&mut [Packet<()>], &mut [u32]>(draw.otc) };
+            i += 1;
+
             otc_dma.send_reverse(draw_otc).expect("OTC DMA failed!");
-            txt.reset();
+
+            // Listen to user input
+            let buttons = unsafe { read_volatile((&raw const PAD_BUFFER[0]).cast::<u16>().add(1)) };
+            println!("Buttons: {buttons:x}");
+            if (buttons & PAD_UP) > 0 {
+                level_state.input_acc.movement.1 += 1;
+            }
+            if (buttons & PAD_DOWN) > 0 {
+                level_state.input_acc.movement.1 -= 1;
+            }
+            if (buttons & PAD_LEFT) > 0 {
+                level_state.input_acc.movement.0 += 1;
+            }
+            if (buttons & PAD_RIGHT) > 0 {
+                level_state.input_acc.movement.0 -= 1;
+            }
 
             // Reset draw mode after sprites
             let mut index = 0;
@@ -172,7 +248,7 @@ fn main() {
             sprt.contents.set_size(Vertex(64, 64));
             sprt.contents.set_tex_coord(TexCoord { x: 0, y: 0 });
             sprt.contents.set_color(TexColor {
-                red: 128,
+                red: 128 + (i % 256) as u8,
                 green: 128,
                 blue: 128,
             });
@@ -193,7 +269,16 @@ fn main() {
         });
 
         fb.draw_sync();
-        fb.wait_vblank();
+        if !fb.wait_vblank() {
+            unsafe { (0x8000aaa0 as *mut u32).write_volatile(0x36) };
+            println!("VSync() timeout!");
+            unsafe {
+                psx_change_clear_pad(0);
+                psx_change_clear_rcnt(3, false);
+            }
+        } else {
+            unsafe { (0x8000aaa0 as *mut u32).write_volatile(0x37) };
+        }
         fb.dma_swap(&mut gpu_dma);
     }
 }
