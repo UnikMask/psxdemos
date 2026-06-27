@@ -1,11 +1,16 @@
 #![no_std]
 #![no_main]
+#![feature(generic_const_exprs)]
+#![feature(asm_experimental_arch)]
+
+use core::arch::asm;
 
 use psx::{
-    Framebuffer,
+    DirectMode, Framebuffer, IndirectMode, TextBox,
     dma::{self},
     dprintln,
     gpu::{Color, Packet, Vertex, VideoMode, primitives::Tile},
+    println,
 };
 
 #[unsafe(no_mangle)]
@@ -22,7 +27,7 @@ fn main() {
         blue: 127,
     });
     let font_tim = fb.load_default_font();
-    let mut txt = font_tim.new_text_box(txt_offset, res);
+    let mut txt = TextBox::<IndirectMode<320, 240>>::from_loaded_tim(&font_tim, txt_offset);
     let mut gpu_dma = dma::GPU::new();
     let mut otc_dma = dma::OTC::new(); // DMA channel for OTC
     let mut frame_no = 0;
@@ -81,6 +86,17 @@ fn main() {
                 });
                 draw[2].insert_packet(tile);
             }
+
+            // Add text to OTC
+            // match txt.get_linked_list() {
+            //     Some((first, Some(last))) => {
+            //         draw[0].insert_packet_list(first, last);
+            //     }
+            //     Some((first, None)) => {
+            //         draw[0].insert_packet(first);
+            //     }
+            //     None => {}
+            // }
         });
 
         // Wait for GPU to finish drawing
