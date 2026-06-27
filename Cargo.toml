@@ -18,3 +18,6 @@ name = "input-management"
 [dependencies]
 psx = { path = "./psx-sdk-rs/psx" }
 thiserror-no-std = "2.0.2"
+
+[profile.dev]
+debug = true
