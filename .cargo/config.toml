@@ -1,4 +1,5 @@
 [build]
+build-stage = 1
 target = ["mipsel-sony-psx"]
 
 [target.mipsel-sony-psx]
@@ -7,3 +8,8 @@ runner = ["pcsx-redux", "-stdout", "-run", "-loadexe"]
 [unstable]
 build-std = ["core", "alloc"]
 build-std-features = ["compiler-builtins-mem"]
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+embed-bitcode = "yes"
