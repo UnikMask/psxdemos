@@ -38,6 +38,8 @@ const PAD_UP: u16 = 0x10;
 const PAD_RIGHT: u16 = 0x20;
 const PAD_DOWN: u16 = 0x40;
 const PAD_LEFT: u16 = 0x80;
+const PAD_CROSS: u16 = 0x4000;
+const PAD_SQUARE: u16 = 0x8000;
 
 static mut PAD_BUFFER: [MaybeUninit<[u32; PAD_BUF_SIZE]>; 2] = [MaybeUninit::uninit(); 2];
 
@@ -231,6 +233,16 @@ fn main() {
             if (buttons & PAD_RIGHT) > 0 {
                 level_state.input_acc.movement.0 -= 1;
             }
+            if (buttons & PAD_CROSS) == 0 {
+                level_state.input_acc.x_pressed += 1;
+            }
+            if (buttons & PAD_SQUARE) == 0 {
+                level_state.input_acc.sq_pressed += 1;
+            }
+
+            dprintln!(txt, "Movement: {:?}", level_state.input_acc.movement);
+            dprintln!(txt, "X pressed: {}", level_state.input_acc.x_pressed);
+            dprintln!(txt, "[] pressed: {}", level_state.input_acc.sq_pressed);
 
             // Reset draw mode after sprites
             let mut index = 0;
@@ -250,9 +262,9 @@ fn main() {
             sprt.contents.set_size(Vertex(64, 64));
             sprt.contents.set_tex_coord(TexCoord { x: 0, y: 0 });
             sprt.contents.set_color(TexColor {
-                red: 128 + (i % 256) as u8,
+                red: 128 + (level_state.input_acc.x_pressed % 256) as u8,
                 green: 128,
-                blue: 128,
+                blue: 128 + (level_state.input_acc.sq_pressed % 256) as u8,
             });
             if let Some(clut) = level_state.texture_stone.clut {
                 sprt.contents.set_clut(clut);
