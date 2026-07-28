@@ -2,7 +2,7 @@
 #![no_main]
 
 use psx::{
-    Framebuffer, dprintln,
+    DirectMode, Framebuffer, TextBox, dprintln,
     gpu::{Color, VideoMode},
 };
 
@@ -14,7 +14,7 @@ fn main() {
     let txt_offset = (8, 8); // Offset bw
     let mut fb = Framebuffer::new(buf0, buf1, res, VideoMode::NTSC, None).expect("Failed??");
     let tim = fb.load_default_font();
-    let mut txt = tim.new_text_box(txt_offset, res); // Make text box take
+    let mut txt = TextBox::<DirectMode>::from_loaded_tim(&tim, txt_offset, res);
     // whole framebuffer resolution
 
     loop {

@@ -9,7 +9,7 @@
 use core::{arch::asm, mem::MaybeUninit, ptr::read_volatile};
 
 use psx::{
-    Framebuffer, LoadedTIM, TextBox, dma, dprintln,
+    Framebuffer, IndirectMode, LoadedTIM, TextBox, dma, dprintln,
     gpu::{
         Bpp, Color, Packet, TexColor, TexCoord, Vertex, VideoMode,
         primitives::{DrawModeTexPage, Sprt},
@@ -51,7 +51,7 @@ struct MainState {
 
     // Debug related text and TIM
     stdout_tim: LoadedTIM,
-    txt: TextBox,
+    txt: TextBox<IndirectMode<400>>,
 }
 
 struct GraphicsState {
@@ -84,7 +84,7 @@ fn init() -> MainState {
     fb.set_bg_color(BG_COLOR);
 
     let stdout_tim = fb.load_default_font();
-    let txt: TextBox = stdout_tim.new_text_box(DBG_TEXT_OFFSET, res);
+    let txt = TextBox::<IndirectMode<400>>::from_loaded_tim(&stdout_tim, DBG_TEXT_OFFSET, res);
 
     MainState {
         fb,
@@ -207,6 +207,8 @@ fn main() {
 
         // TODO: Replace with drawop
         gpu_dma.send_list_and(&disp.otc[OT_SIZE - 1], || {
+            txt.reset();
+
             // Reset the ordering table
             let draw_otc =
                 unsafe { core::mem::transmute::<&mut [Packet<()>], &mut [u32]>(draw.otc) };
@@ -216,7 +218,7 @@ fn main() {
 
             // Listen to user input
             let buttons = unsafe { read_volatile((&raw const PAD_BUFFER[0]).cast::<u16>().add(1)) };
-            println!("Buttons: {buttons:x}");
+            dprintln!(txt, "Buttons: {buttons:x}");
             if (buttons & PAD_UP) > 0 {
                 level_state.input_acc.movement.1 += 1;
             }
@@ -266,6 +268,9 @@ fn main() {
                 true,
             ));
             draw.otc[1].insert_packet(tpage);
+
+            // Add text to OTC
+            txt.link(&mut draw.otc[1]);
         });
 
         fb.draw_sync();

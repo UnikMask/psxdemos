@@ -1,6 +1,6 @@
 #![no_std]
 #![no_main]
-#![feature(ptr_as_ref_unchecked)]
+#![allow(internal_features)]
 #![feature(core_intrinsics)]
 
 use core::{
@@ -10,7 +10,7 @@ use core::{
 };
 
 use psx::{
-    Framebuffer, LoadedTIM, TextBox, dma, dprintln,
+    Framebuffer, IndirectMode, LoadedTIM, TextBox, WriteMode, dma, dprintln,
     gpu::{
         Bpp, Color, Packet, TexColor, TexCoord, TexPage, Vertex, VideoMode,
         primitives::{DrawModeTexPage, Sprt, Tile},
@@ -38,7 +38,7 @@ struct MainState {
     gpu_dma: dma::GPU,
     otc_dma: dma::OTC,
     stdout_tim: LoadedTIM,
-    txt: TextBox,
+    txt: TextBox<IndirectMode<400>>,
 }
 
 // Initialize main state
@@ -49,7 +49,7 @@ fn init() -> MainState {
     fb.set_bg_color(BG_COLOR);
 
     let stdout_tim = fb.load_default_font();
-    let txt: TextBox = stdout_tim.new_text_box(DBG_TEXT_OFFSET, res);
+    let txt = TextBox::<IndirectMode<_>>::from_loaded_tim(&stdout_tim, DBG_TEXT_OFFSET, res);
     MainState {
         fb,
         gpu_dma: dma::GPU::new(),
@@ -178,7 +178,11 @@ fn load_level(fb: &mut Framebuffer) -> LevelState {
 }
 
 /// Update things - logic written here
-fn update(draw: &mut GraphicsEnv, txt: &mut TextBox, state: &mut LevelState) {
+fn update<const M: usize>(
+    draw: &mut GraphicsEnv,
+    txt: &mut TextBox<IndirectMode<M>>,
+    state: &mut LevelState,
+) {
     // Draw a sprite primitive
     dprintln!(txt, "Draw index size: {}", draw.buffer.index);
 
@@ -238,6 +242,9 @@ fn update(draw: &mut GraphicsEnv, txt: &mut TextBox, state: &mut LevelState) {
         });
         draw.otc[2].insert_packet(tile);
     }
+
+    // Insert textbox buffer to OTC
+    txt.link(&mut draw.otc[1]);
 
     state.frame_no = (state.frame_no + 1) % 560;
 }
