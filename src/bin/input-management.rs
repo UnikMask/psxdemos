@@ -52,7 +52,6 @@ struct MainState {
     otc_dma: dma::OTC,
 
     // Debug related text and TIM
-    stdout_tim: LoadedTIM,
     txt: TextBox<IndirectMode<400>>,
 }
 
@@ -92,7 +91,6 @@ fn init() -> MainState {
         fb,
         gpu_dma: dma::GPU::new(),
         otc_dma: dma::OTC::new(),
-        stdout_tim,
         txt,
     }
 }
@@ -192,7 +190,7 @@ fn main() {
         mut gpu_dma,
         mut otc_dma,
         mut txt,
-        stdout_tim,
+        ..
     } = init();
     init_input();
     unsafe { (0x8000aaa0 as *mut u32).write_volatile(0x33) };
@@ -246,14 +244,6 @@ fn main() {
 
             // Reset draw mode after sprites
             let mut index = 0;
-            let stdout_draw = new_prim::<DrawModeTexPage>(draw.buffer, &mut index);
-            *stdout_draw = Packet::new(DrawModeTexPage::from(
-                stdout_tim.tex_page,
-                Bpp::Bits4,
-                false,
-                true,
-            ));
-            draw.otc[0].insert_packet(stdout_draw);
 
             // Set up sprite
             let sprt = new_prim::<Sprt>(draw.buffer, &mut index);
@@ -269,7 +259,7 @@ fn main() {
             if let Some(clut) = level_state.texture_stone.clut {
                 sprt.contents.set_clut(clut);
             }
-            draw.otc[1].insert_packet(sprt);
+            draw.otc[2].insert_packet(sprt);
 
             // Add the TPage primitive for rocks next
             let tpage = new_prim::<DrawModeTexPage>(draw.buffer, &mut index);
@@ -279,10 +269,8 @@ fn main() {
                 false,
                 true,
             ));
-            draw.otc[1].insert_packet(tpage);
-
-            // Add text to OTC
-            txt.link(&mut draw.otc[1]);
+            draw.otc[2].insert_packet(tpage);
+            txt.link(&mut draw.otc[0]);
         });
 
         fb.draw_sync();
