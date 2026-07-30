@@ -5,15 +5,19 @@ edition = "2024"
 
 [[bin]]
 name = "hello-world"
+test = false
 
 [[bin]]
 name = "simple-graphics"
+test = false
 
 [[bin]]
 name = "textured-graphics"
+test = false
 
 [[bin]]
 name = "input-management"
+test = false
 
 [dependencies]
 psx = { path = "./psx-sdk-rs/psx" }
