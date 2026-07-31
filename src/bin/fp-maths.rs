@@ -13,15 +13,19 @@ use core::{
     fmt::Display,
     iter::Sum,
     mem::MaybeUninit,
-    ops::{Add, Div, Mul, Rem, Shr, Sub},
+    ops::{Add, Div, Mul, Range, Rem, Shr, Sub},
     ptr::read_volatile,
 };
 
 use psx::{
-    Framebuffer, IndirectMode, TextBox, dma, dprintln,
-    gpu::{Color, Packet, Vertex, VideoMode, primitives::PolyF3},
+    Framebuffer, IndirectMode, LoadedTIM, TextBox, dma, dprintln,
+    gpu::{
+        Bpp, Color, Packet, TexCoord, TexPage, Vertex, VideoMode,
+        primitives::{PolyF3, PolyFT4},
+    },
     hw::gpu::GP0Command,
-    sys::kernel::{psx_change_clear_pad, psx_change_clear_rcnt, psx_init_pad, psx_start_pad},
+    include_tim,
+    sys::kernel::{self, psx_change_clear_pad, psx_change_clear_rcnt, psx_init_pad, psx_start_pad},
 };
 
 // General constants for video setup
@@ -36,6 +40,8 @@ const BG_COLOR: Color = Color {
 const DBG_TEXT_OFFSET: (i16, i16) = (8, 8);
 const OT_SIZE: usize = 8;
 const BUF_SIZE: usize = 32_768;
+
+const SEED: u32 = 1039;
 
 /// Main runtime state. Keeps track of DMA and framebuffers.
 struct MainState {
@@ -126,12 +132,16 @@ fn init_graphics() -> GraphicsState {
 ///////////////////////////
 
 struct LevelState {
-    // Input accumulator for moving our sprite
-    sprite_transform: SpriteTransform,
-    sprite_velocity: SpriteTransform,
+    // Input accumulator for moving our sprites
+    transforms: [SpriteTransform; 2],
+    // Input velocities applied to transforms on physics updates
+    velocities: [SpriteTransform; 2],
+    // Textures
+    textures: [LoadedTIM; 1],
 }
 
 /// Transform component of the controlled sprite
+#[derive(Default, Clone, Copy)]
 struct SpriteTransform {
     position: (Fixed32, Fixed32),
     rotation: Fixed32,
@@ -147,19 +157,37 @@ fn main() {
     let MainState { mut fb, mut txt } = init();
     init_input();
 
+    let rng = Rng::new(SEED);
+
     // Set up graphics state
     let mut graphics_state = init_graphics();
 
     // No need to load level - just create an empty struct
     let mut level = LevelState {
-        sprite_transform: SpriteTransform {
-            position: (Fixed32::from_i16(160), Fixed32::from_i16(120)),
-            rotation: Fixed32(0),
-        },
-        sprite_velocity: SpriteTransform {
-            position: (Fixed32(0), Fixed32(0)),
-            rotation: Fixed32(0),
-        },
+        transforms: [
+            SpriteTransform {
+                position: (Fixed32::from_i16(160), Fixed32::from_i16(120)),
+                rotation: Fixed32(0),
+            },
+            SpriteTransform {
+                position: (
+                    Fixed32::from_i16(rng.rand_range(20..300) as i16),
+                    Fixed32::from_i16(rng.rand_range(20..220) as i16),
+                ),
+                rotation: Fixed32(rng.rand_range_u32(0..4096 * 360) as i32),
+            },
+        ],
+        velocities: [
+            SpriteTransform::default(),
+            SpriteTransform {
+                position: (
+                    Fixed32(rng.rand_range_u32(0..4096) as i32),
+                    Fixed32(rng.rand_range_u32(0..4096) as i32),
+                ),
+                rotation: Fixed32(rng.rand_range_u32(0..2 * 4096) as i32),
+            },
+        ],
+        textures: [fb.load_tim(include_tim!("../../resources/stones_useable.tim"))],
     };
 
     // Display loop
@@ -176,21 +204,20 @@ fn main() {
             otc_dma.send_reverse(draw_otc).expect("OTC DMA failed!");
 
             // Update transform using user input
-            update_transform(
-                &mut level.sprite_transform,
-                &mut level.sprite_velocity,
-                unsafe { read_volatile((&raw const PAD_BUFFER[0]).cast::<u16>().add(1)) },
-            );
-            update_physics(&mut level.sprite_transform, &mut level.sprite_velocity);
+            update_transform(&mut level.transforms[0], &mut level.velocities[0], unsafe {
+                read_volatile((&raw const PAD_BUFFER[0]).cast::<u16>().add(1))
+            });
+            update_physics(&mut level.transforms[0], &mut level.velocities[0]);
+            update_physics(&mut level.transforms[1], &mut level.velocities[1]);
 
             // Print sprite location
             dprintln!(
                 txt,
                 "Position: ({}, {})",
-                level.sprite_transform.position.0,
-                level.sprite_transform.position.1
+                level.transforms[0].position.0,
+                level.transforms[0].position.1
             );
-            dprintln!(txt, "Rotation: {} degrees", level.sprite_transform.rotation);
+            dprintln!(txt, "Rotation: {} degrees", level.transforms[0].rotation);
 
             let player_tri = [Vertex(0, -20), Vertex(10, 20), Vertex(-10, 20)];
 
@@ -203,25 +230,85 @@ fn main() {
             });
 
             // Convert rotation in degrees to radians
-            let angle = level.sprite_transform.rotation; // Convert to half-circles
-            let (px, py) = level.sprite_transform.position;
+            let SpriteTransform {
+                position: (a_x, a_y),
+                rotation: arrow_rot,
+            } = level.transforms[0];
+            let SpriteTransform {
+                position: (c_x, c_y),
+                rotation: cube_rot,
+            } = level.transforms[1];
 
             // Perform matrix rotation on the player vertices
-            let vertices = player_tri.map(|Vertex(vx, vy)| {
+            let arrow_vertices = player_tri.map(|Vertex(vx, vy)| {
                 Vertex(
                     // X position
-                    (Fixed32::from_i16(vx) * acos(angle) - Fixed32::from_i16(vy) * asin(angle)
-                        + px)
+                    (Fixed32::from_i16(vx) * acos(arrow_rot)
+                        - Fixed32::from_i16(vy) * asin(arrow_rot)
+                        + a_x)
                         .to_i16(),
                     // Y position
-                    (Fixed32::from_i16(vx) * asin(angle)
-                        + Fixed32::from_i16(vy) * acos(angle)
-                        + py)
+                    (Fixed32::from_i16(vx) * asin(arrow_rot)
+                        + Fixed32::from_i16(vy) * acos(arrow_rot)
+                        + a_y)
                         .to_i16(),
                 )
             });
-            player.set_vertices(vertices);
+            player.set_vertices(arrow_vertices);
             add_prim::<PolyF3>(&mut draw, player, 2); // Insert player primitive to OTC index 2
+
+            // Generate textured cube structure and texture
+            let mut cube = PolyFT4::new();
+            let tex_page = unsafe {
+                core::mem::transmute::<u16, TexPage>(
+                    core::mem::transmute::<TexPage, u16>(level.textures[0].tex_page)
+                        | ((Bpp::Bits8 as u16) << 7)
+                        | 1 << 10,
+                )
+            };
+            cube.set_tex_page(tex_page);
+            if let Some(clut) = level.textures[0].clut {
+                cube.set_clut(clut);
+            }
+
+            // Compute textured cube vertices
+            const CUBE_SCALE: i16 = 80;
+            let cube_vertices = [
+                Vertex(-CUBE_SCALE / 2, -CUBE_SCALE / 2),
+                Vertex(CUBE_SCALE / 2, -CUBE_SCALE / 2),
+                Vertex(-CUBE_SCALE / 2, CUBE_SCALE / 2),
+                Vertex(CUBE_SCALE / 2, CUBE_SCALE / 2),
+            ];
+
+            let (cos_x, sin_x) = (acos(cube_rot), asin(cube_rot));
+            let cube_vertices = cube_vertices.map(|Vertex(vx, vy)| {
+                Vertex(
+                    (Fixed32::from_i16(vx) * cos_x - Fixed32::from_i16(vy) * sin_x + c_x).to_i16(),
+                    (Fixed32::from_i16(vx) * sin_x + Fixed32::from_i16(vy) * cos_x + c_y).to_i16(),
+                )
+            });
+            cube.set_color(Color {
+                red: 255,
+                green: 255,
+                blue: 255,
+            });
+            cube.set_vertices(cube_vertices);
+            cube.set_tex_coords([
+                TexCoord { x: 0, y: 0 },
+                TexCoord {
+                    x: CUBE_SCALE as u8,
+                    y: 0,
+                },
+                TexCoord {
+                    x: 0,
+                    y: CUBE_SCALE as u8,
+                },
+                TexCoord {
+                    x: CUBE_SCALE as u8,
+                    y: CUBE_SCALE as u8,
+                },
+            ]);
+            add_prim::<PolyFT4>(&mut draw, cube, 3);
 
             // Draw text
             txt.link(&mut draw.otc[0]);
@@ -475,4 +562,23 @@ fn isin(x: Fixed32) -> Fixed32 {
     }
     x >>= 30 - QN; // Shift back to quarter-circle range
     Fixed32((x * ((3 << QP) - ((x * x) >> QR))) >> QS)
+}
+
+struct Rng;
+
+impl Rng {
+    fn new(seed: u32) -> Self {
+        unsafe { kernel::psx_srand(seed) };
+        Self
+    }
+
+    fn rand_range(&self, Range { start, end }: Range<u16>) -> u16 {
+        (unsafe { kernel::psx_rand() }) % (end - start) + start
+    }
+
+    fn rand_range_u32(&self, Range { start, end }: Range<u32>) -> u32 {
+        let num: u32 =
+            ((unsafe { kernel::psx_rand() } as u32) << 16) + unsafe { kernel::psx_rand() } as u32;
+        num % (end - start) + start
+    }
 }
