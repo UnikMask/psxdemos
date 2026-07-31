@@ -198,7 +198,6 @@ fn main() {
     // Set up graphics
     let mut graphics_state = init_graphics();
     let mut level_state = load_level(&mut fb);
-    let mut i: u32 = 0;
 
     unsafe { (0x8000aaa0 as *mut u32).write_volatile(0x35) };
     loop {
@@ -212,7 +211,6 @@ fn main() {
             // Reset the ordering table
             let draw_otc =
                 unsafe { core::mem::transmute::<&mut [Packet<()>], &mut [u32]>(draw.otc) };
-            i += 1;
 
             otc_dma.send_reverse(draw_otc).expect("OTC DMA failed!");
 
