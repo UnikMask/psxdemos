@@ -27,6 +27,12 @@ test = false
 bench = false
 doctest = false
 
+[[bin]]
+name = "fp-maths"
+test = false
+bench = false
+doctest = false
+
 [dependencies]
 psx = { path = "./psx-sdk-rs/psx" }
 thiserror-no-std = "2.0.2"
