@@ -21,7 +21,6 @@ use psx::{
     Framebuffer, IndirectMode, TextBox, dma, dprintln,
     gpu::{Color, Packet, Vertex, VideoMode, primitives::PolyF3},
     hw::gpu::GP0Command,
-    println,
     sys::kernel::{psx_change_clear_pad, psx_change_clear_rcnt, psx_init_pad, psx_start_pad},
 };
 
@@ -129,6 +128,7 @@ fn init_graphics() -> GraphicsState {
 struct LevelState {
     // Input accumulator for moving our sprite
     sprite_transform: SpriteTransform,
+    sprite_velocity: SpriteTransform,
 }
 
 /// Transform component of the controlled sprite
@@ -156,6 +156,10 @@ fn main() {
             position: (Fixed32::from_i16(160), Fixed32::from_i16(120)),
             rotation: Fixed32(0),
         },
+        sprite_velocity: SpriteTransform {
+            position: (Fixed32(0), Fixed32(0)),
+            rotation: Fixed32(0),
+        },
     };
 
     // Display loop
@@ -172,9 +176,12 @@ fn main() {
             otc_dma.send_reverse(draw_otc).expect("OTC DMA failed!");
 
             // Update transform using user input
-            update_transform(&mut level.sprite_transform, unsafe {
-                read_volatile((&raw const PAD_BUFFER[0]).cast::<u16>().add(1))
-            });
+            update_transform(
+                &mut level.sprite_transform,
+                &mut level.sprite_velocity,
+                unsafe { read_volatile((&raw const PAD_BUFFER[0]).cast::<u16>().add(1)) },
+            );
+            update_physics(&mut level.sprite_transform, &mut level.sprite_velocity);
 
             // Print sprite location
             dprintln!(
@@ -198,12 +205,9 @@ fn main() {
             // Convert rotation in degrees to radians
             let angle = level.sprite_transform.rotation; // Convert to half-circles
             let (px, py) = level.sprite_transform.position;
-            dprintln!(txt, "Theta: {angle} degrees ({:x})", angle.0);
-            dprintln!(txt, "icos(theta): {}", acos(angle));
-            dprintln!(txt, "isin(theta): {}", asin(angle));
 
             // Perform matrix rotation on the player vertices
-            player.set_vertices(player_tri.map(|Vertex(vx, vy)| {
+            let vertices = player_tri.map(|Vertex(vx, vy)| {
                 Vertex(
                     // X position
                     (Fixed32::from_i16(vx) * acos(angle) - Fixed32::from_i16(vy) * asin(angle)
@@ -215,7 +219,8 @@ fn main() {
                         + py)
                         .to_i16(),
                 )
-            }));
+            });
+            player.set_vertices(vertices);
             add_prim::<PolyF3>(&mut draw, player, 2); // Insert player primitive to OTC index 2
 
             // Draw text
@@ -230,27 +235,43 @@ fn main() {
 }
 
 /// Update the sprite's transform
-fn update_transform(transform: &mut SpriteTransform, input: u16) {
+fn update_transform(transform: &mut SpriteTransform, velocity: &mut SpriteTransform, input: u16) {
     // Get angle in radians
 
     // Compute movement vector
     let angle = transform.rotation;
     let (mvt_x, mvt_y) = (asin(angle), acos(angle) * (-1));
-    let (px, py) = &mut transform.position;
+    let (px, py) = &mut velocity.position;
     if input & PAD_UP == 0 {
-        *px = *px + mvt_x;
-        *py = *py + mvt_y;
+        *px = *px + mvt_x * Fixed32(256);
+        *py = *py + mvt_y * Fixed32(256);
+    } else if input & PAD_DOWN == 0 {
+        *px = *px - mvt_x * Fixed32(256);
+        *py = *py - mvt_y * Fixed32(256);
     }
-    if input & PAD_DOWN == 0 {
-        *px = *px - mvt_x;
-        *py = *py - mvt_y;
-    }
+
+    // Add drag
+    *px = *px * Fixed32(3950);
+    *py = *py * Fixed32(3950);
+
     if input & PAD_LEFT == 0 {
-        transform.rotation = (transform.rotation - Fixed32(16384)) % 360;
+        velocity.rotation = Fixed32((velocity.rotation - Fixed32(1024)).0.max((-360) << 12));
     }
     if input & PAD_RIGHT == 0 {
-        transform.rotation = (transform.rotation + Fixed32(16384)) % 360;
+        velocity.rotation = Fixed32((velocity.rotation + Fixed32(1024)).0.min(360 << 12));
     }
+
+    // Add drag
+    velocity.rotation = velocity.rotation * Fixed32(3950);
+}
+
+/// Update the player's position and rotation from it's forces
+fn update_physics(transform: &mut SpriteTransform, velocity: &mut SpriteTransform) {
+    transform.position.0 =
+        (transform.position.0 + velocity.position.0 + (RES_X as i32)) % (RES_X as i32);
+    transform.position.1 =
+        (transform.position.1 + velocity.position.1 + (RES_Y as i32)) % (RES_Y as i32);
+    transform.rotation = (transform.rotation + velocity.rotation) % 360;
 }
 
 ///////////////////
@@ -310,16 +331,13 @@ fn init_input() {
 struct Fixed32(i32);
 const FRACTION_SIZE: i32 = 12;
 
-// Constants
-const FIXED_PI: Fixed32 = Fixed32(12_868);
-
 impl Fixed32 {
     fn from_i16(a: i16) -> Self {
         Self((a as i32) << FRACTION_SIZE)
     }
 
     fn to_i16(self) -> i16 {
-        ((self.0 >> FRACTION_SIZE) & 0xff) as i16
+        (self.0 >> FRACTION_SIZE) as i16
     }
 }
 
