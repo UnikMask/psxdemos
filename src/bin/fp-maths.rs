@@ -4,8 +4,6 @@
 #![no_std]
 #![no_main]
 #![feature(const_trait_impl)]
-#![feature(const_closures)]
-#![feature(const_array)]
 #![feature(asm_experimental_arch)]
 
 use core::{
@@ -554,14 +552,42 @@ fn isin(x: Fixed32) -> Fixed32 {
     const QR: i32 = 2 * QN - QP;
     const QS: i32 = QN + QP + 1 - FRACTION_SIZE;
 
-    x <<= 30 - QN; // Shift fraction to full 32-bit range
+    unsafe {
+        asm!(
+            ".set noat",
+            "sll {x}, {x}, {nshift}", // x := x << 30-13
+            "sll $2, {x}, 1", // x_shifted := x << 1
+            "xor $2, {x}, $2",
 
-    // Sine wave quadrants 1 and 2 check
-    if x ^ (x << 1) < 0 {
-        x = (1 << 31) - x;
+            // if x ^ (x<<1) > 0 {
+            // x := (1 << 31) - x
+            // }
+            "bgez $2, 1f",
+            "li $2, 1<<31",
+            "subu {x}, $2, {x}",
+            "1: sra {x}, {x}, {nshift}", // x >>= (30-13)
+
+            // $2 := (3 << QP) - (x^2 >> QR)
+            "mult {x}, {x}",
+            "mflo $2",
+            "li $3, {qpshift}",
+            "sra $2, $2, {qr}",
+            "sub $2, $3, $2",
+
+            // x := (x * $2) >> QS
+            "mult {x}, $2",
+            "mflo {x}",
+            "sra {x}, {x}, {qs}",
+            out("$2") _,
+            out("$3") _,
+            nshift= const 30 - QN,
+            qpshift = const 3 << QP,
+            qr = const QR,
+            qs = const QS,
+            x = inout(reg) x
+        );
     }
-    x >>= 30 - QN; // Shift back to quarter-circle range
-    Fixed32((x * ((3 << QP) - ((x * x) >> QR))) >> QS)
+    Fixed32(x)
 }
 
 struct Rng;
