@@ -478,7 +478,25 @@ impl Mul<i32> for Fixed32 {
 impl Mul<Fixed32> for Fixed32 {
     type Output = Fixed32;
     fn mul(self, rhs: Fixed32) -> Self::Output {
-        Fixed32((rhs.0 * self.0) >> FRACTION_SIZE)
+        let mut res = self;
+        unsafe {
+            asm!(
+                "mult {x}, $2", // (lo, hi) = res * rhs
+                "mflo {x}",
+                "mfhi $3",
+                "sra {x}, {x}, {fz}", // lo >>= FRACTION_SIZE
+                "nop",
+                "and $3, 0xfff",
+                "sll $3, $3, 32-{fz}", // hi <<= 32 - FRACTION_SIZE
+                "or {x}, {x}, $3",
+                in("$2") rhs.0,
+                out("$3") _,
+                fz = const FRACTION_SIZE,
+                x = inout(reg) res.0,
+            )
+        };
+        res
+        // Fixed32((self.0 * rhs.0) >> FRACTION_SIZE)
     }
 }
 
@@ -494,7 +512,21 @@ impl Div<Fixed32> for Fixed32 {
     type Output = Fixed32;
 
     fn div(self, rhs: Fixed32) -> Self::Output {
-        Fixed32((self.0 << FRACTION_SIZE) / rhs.0) // At most keeps 7 bits of precision on decimal part
+        let mut res = self;
+        debug_assert!(rhs.0 != 0, "Division by zero!");
+
+        // At most keeps 7 bits of precision on decimal part
+        unsafe {
+            asm!(
+                "srl {x}, {x}, {fs}",
+                "div {x}, $2",
+                "mfhi {x}",
+                in("$2") rhs.0,
+                x = inout(reg) res.0,
+                fs = const FRACTION_SIZE
+            );
+        }
+        res
     }
 }
 
